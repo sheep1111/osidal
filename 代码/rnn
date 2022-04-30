@@ -1,0 +1,17 @@
+ ## 构建RNN模型
+inputs = Input(name='inputs',shape=[100])
+## Embedding(词汇表大小,batch大小,每个新闻的词长)
+layer = Embedding(len(vocab)+1,128,input_length=100)(inputs)
+layer = SimpleRNN(64,return_sequences = True)(layer)
+layer = SimpleRNN(64, return_sequences=False)(layer)
+layer = Dropout(0.5)(layer)
+output = Dense(units = 5, activation="softmax")(layer)
+model = Model(inputs=inputs, outputs=output)
+model.summary()
+model.compile('adam', 'binary_crossentropy', metrics=['accuracy'])
+
+file=pd.read_csv('data/train.csv')
+df_train=pd.DataFrame(file)
+
+one_hot_labels = tf.keras.utils.to_categorical(df_train['label'], num_classes=5)        
+model_train = model.fit(pad_sequence_train,one_hot_labels,batch_size=8001,epochs=100)
