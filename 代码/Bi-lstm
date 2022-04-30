@@ -1,0 +1,18 @@
+ ## 构建Bi-LSTM模型
+inputs = Input(name='inputs',shape=[100])
+## Embedding(词汇表大小,batch大小,每个新闻的词长)
+layer = Embedding(len(vocab)+1,128,input_length=100)(inputs)
+layer = Dropout(0.5)(layer)
+layer = Bidirectional(LSTM(128,return_sequences=True),merge_mode='concat')(layer)
+layer = Dropout(0.5)(layer)
+layer = Flatten()(layer)
+layer = Dense(5,activation="softmax",name="FC1")(layer)
+model = Model(inputs=inputs,outputs=layer)
+model.summary()
+model.compile(loss="categorical_crossentropy",optimizer=RMSprop(),metrics=["accuracy"])
+
+file=pd.read_csv('data/train.csv')
+df_train=pd.DataFrame(file)
+
+one_hot_labels = tf.keras.utils.to_categorical(df_train['label'], num_classes=5)        
+model_train = model.fit(pad_sequence_train,one_hot_labels,batch_size=8001,epochs=100)
