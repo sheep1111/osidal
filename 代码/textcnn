@@ -1,0 +1,166 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import re
+import string
+from gensim.models import word2vec
+from gensim.models import KeyedVectors
+import tensorflow as tf
+from keras.layers.merge import concatenate
+import os                                                                       #画模型图
+os.environ["PATH"] += os.pathsep + 'C:/Program Files (x86)/Graphviz2.38/bin/'
+from keras.utils.vis_utils import plot_model
+from keras.layers import Conv1D,Flatten,Dropout,GlobalAvgPool1D,MaxPooling1D
+from keras.layers import BatchNormalization
+from keras.models import Sequential,Model
+from keras.layers import Dense,Activation,Embedding,merge,Input,Lambda,Reshape
+
+file=pd.read_csv('data/train.csv')
+df=pd.DataFrame(file)
+df['text'].to_csv('data/sum.csv')
+
+file=pd.read_csv('data/test.csv')
+df=pd.DataFrame(file)
+df['text'].to_csv('data/sum.csv',mode='a',header=False)
+
+file=pd.read_csv('data/sum.csv')
+df=pd.DataFrame(file)
+
+#要去除的标点符号
+remove_punctuation = string.punctuation#调用string包的string.punctuation函数可得到
+
+#停词表	
+stopwords = ['very', 'ourselves', 'am', 'doesn', 'through', 'me', 'against', 'up', 'just', 'her', 'ours', 
+            'couldn', 'because', 'is', 'isn', 'it', 'only', 'in', 'such', 'too', 'mustn', 'under', 'their', 
+            'if', 'to', 'my', 'himself', 'after', 'why', 'while', 'can', 'each', 'itself', 'his', 'all', 'once', 
+            'herself', 'more', 'our', 'they', 'hasn', 'on', 'ma', 'them', 'its', 'where', 'did', 'll', 'you', 
+            'didn', 'nor', 'as', 'now', 'before', 'those', 'yours', 'from', 'who', 'was', 'm', 'been', 'will', 
+            'into', 'same', 'how', 'some', 'of', 'out', 'with', 's', 'being', 't', 'mightn', 'she', 'again', 'be', 
+            'by', 'shan', 'have', 'yourselves', 'needn', 'and', 'are', 'o', 'these', 'further', 'most', 'yourself', 
+            'having', 'aren', 'here', 'he', 'were', 'but', 'this', 'myself', 'own', 'we', 'so', 'i', 'does', 'both', 
+            'when', 'between', 'd', 'had', 'the', 'y', 'has', 'down', 'off', 'than', 'haven', 'whom', 'wouldn', 
+            'should', 've', 'over', 'themselves', 'few', 'then', 'hadn', 'what', 'until', 'won', 'no', 'about', 
+            'any', 'that', 'for', 'shouldn', 'don', 'do', 'there', 'doing', 'an', 'or', 'ain', 'hers', 'wasn', 
+            'weren', 'above', 'a', 'at', 'your', 'theirs', 'below', 'other', 'not', 're', 'him', 'during', 'which']
+
+texts=[]#预处理后的文本
+
+for i in range (len(df)):
+	
+	string=re.sub('[{}]'.format(remove_punctuation),"",df['text'][i])#文档要去掉的标点符号
+	
+	words_seq=string.lower().split()#转换小写和分词
+	
+	words=[]#列表储存分词后的词语
+  
+	#把停用词去掉
+	for word in words_seq:
+		if word not in stopwords:
+			words.append(word)
+			
+	texts.append(words)
+
+tokenizer = tf.keras.preprocessing.text.Tokenizer(filters='!"#$%&()*+,-./:;<=>?@[\]^_`{|}~\t\n')
+tokenizer.fit_on_texts(texts)
+vocab=tokenizer.word_index #得到每个词的编号,编号从1开始
+#print(len(vocab))
+
+#对文本转换成序列并进行padding
+sequence_train=tokenizer.texts_to_sequences(texts[:8001])
+sequence_test=tokenizer.texts_to_sequences(texts[8001:])
+#对齐
+pad_sequence_train=tf.keras.preprocessing.sequence.pad_sequences(sequence_train, maxlen=100)#输入的X
+pad_sequence_test=tf.keras.preprocessing.sequence.pad_sequences(sequence_test, maxlen=100)
+
+word_vector=word2vec.Word2Vec.load("test.model")#训练得到的词向量
+#用0补齐
+embedding_vector=np.zeros((len(vocab)+1,100))# 预训练的词向量中没有出现的词用0向量表示  
+
+
+for word, i in vocab.items():
+    try:        
+        embedding_vector[i] = word_vector.wv[str(word)]
+        
+    except KeyError:
+        continue
+        
+        
+#构建textcnn模型
+#model = tf.keras.Sequential()
+
+#实例化一个张量
+main_input = tf.keras.layers.Input(shape=(100,), dtype='float64')
+
+#嵌入层
+embedder=tf.keras.layers.Embedding(len(vocab)+1, 100, input_length=100,weights = [embedding_vector],trainable=True)
+#输入(batch size,单个文档句子长度),输出(batch size,句子长度,词向量维度）
+embed = embedder(main_input)
+
+
+
+#卷积层		
+		# 词窗大小分别为3,4,5
+cnn1 = Conv1D(256, 3, padding='same', strides=1, activation='relu')(embed)
+cnn1 = MaxPooling1D(pool_size=38)(cnn1)
+cnn2 = Conv1D(256, 4, padding='same', strides=1, activation='relu')(embed)
+cnn2 = MaxPooling1D(pool_size=37)(cnn2)
+cnn3 = Conv1D(256, 5, padding='same', strides=1, activation='relu')(embed)
+cnn3 = MaxPooling1D(pool_size=36)(cnn3)
+
+
+
+    # 合并三个模型的输出向量
+cnn = concatenate([cnn1, cnn2, cnn3], axis=-1)
+
+#展平图层
+flat = tf.keras.layers.Flatten()(cnn)
+
+#Dropout层，防止过拟合
+drop = tf.keras.layers.Dropout(0.5)(flat)#随机的拿掉网络中的部分神经元，从而减小对W权重的依赖，以达到减小过拟合的效果
+
+#全连接层
+main_output = tf.keras.layers.Dense(5, activation='softmax')(drop)
+
+#完成模型的建立
+model = tf.keras.Model(inputs=main_input, outputs=main_output)
+
+model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+
+file=pd.read_csv('data/train.csv')
+df_train=pd.DataFrame(file)
+
+one_hot_labels = tf.keras.utils.to_categorical(df_train['label'], num_classes=5)
+model_train=model.fit(pad_sequence_train, one_hot_labels, batch_size=8001, epochs=2)        
+
+#画出模型图
+plot_model(model,to_file='data/textCNNmodel.png',show_shapes=True,show_layer_names=False,rankdir='LR')
+
+#绘图
+plt.figure(figsize=(10, 5))
+plt.subplot(121)
+plt.plot(model_train.history['loss'], c='g', label='train')
+#plt.plot(model_train.history['val_loss'], c='b', label='validation')
+plt.legend()
+plt.xlabel('epoch')
+plt.ylabel('loss')
+plt.title('Model loss')
+plt.subplot(122)
+
+plt.plot(model_train.history['accuracy'], c='g', label='train')
+#plt.plot(model_train.history['val_acc'], c='b', label='validation')
+plt.legend()
+plt.xlabel('epoch')
+plt.ylabel('accuracy')
+plt.title('Model accuracy')
+
+plt.show()
+
+
+#测试集预测
+result = model.predict(pad_sequence_test)
+result_labels = np.argmax(result, axis=1)  
+y_predict = list(map(str, result_labels))
+
+df_predict=pd.DataFrame(y_predict)
+df_predict.columns=['label']
+df_predict.to_csv('data/submit_textCNN.csv',index_label='id')
